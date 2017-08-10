@@ -1,35 +1,72 @@
 #ifndef LOG_H
 #define LOG_H
 
-#define BOOST_LOG_DYN_LINK 1 // necessary when linking the boost_log library dynamically
 
-#include <boost/log/trivial.hpp>
-#include <boost/log/sources/global_logger_storage.hpp>
 #include <stdio.h>
 #include <string.h>
-// the logs are also written to LOGFILE
-#define LOGFILE "logfile.log"
+#include <ostream>
+#include <iostream>
 
-// just log messages with severity >= SEVERITY_THRESHOLD are written
-//#define SEVERITY_THRESHOLD logging::trivial::trace
-#define SEVERITY_THRESHOLD logging::trivial::debug
-//#define SEVERITY_THRESHOLD logging::trivial::fatal
+#define TRACE 5
+#define DEBUG 4
+#define INFO 3
+#define WARNING 2
+#define ERROR 1
+#define FATAL 0
 
-// register a global logger
-BOOST_LOG_GLOBAL_LOGGER(logger, boost::log::sources::severity_logger_mt<boost::log::trivial::severity_level>)
+#define SEVERITY_THRESHOLD DEBUG
 
-// just a helper macro used by the macros below - don't use it in your code
-#define LOG(severity) BOOST_LOG_SEV(logger::get(),boost::log::trivial::severity)
+extern std::ostream null_stream;
+
+class NullBuffer : public std::streambuf
+{
+public:
+  int overflow(int c);
+};
+
+struct EndLine {
+  ~EndLine() { std::cout << std::endl; }
+};
 
 // ===== log macros =====
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 #define PREFIX __FILENAME__ << ":" << __LINE__ << " (" << __FUNCTION__ << ") - "
-#define LOG_TRACE   LOG(trace) << PREFIX
-#define LOG_DEBUG   LOG(debug) << PREFIX
-#define LOG_INFO    LOG(info) << PREFIX
-#define LOG_WARNING LOG(warning) << PREFIX
-#define LOG_ERROR   LOG(error) << PREFIX
-#define LOG_FATAL   LOG(fatal) << PREFIX
+
+#if SEVERITY_THRESHOLD >= TRACE
+# define LOG_TRACE (EndLine(), std::cout << PREFIX)
+#else
+# define LOG_TRACE null_stream
+#endif
+
+#if SEVERITY_THRESHOLD >= DEUBG
+# define LOG_DEBUG (EndLine(), std::cout << PREFIX)
+#else
+# define LOG_DEBUG null_stream
+#endif
+
+#if SEVERITY_THRESHOLD >= INFO
+# define LOG_INFO (EndLine(), std::cout << PREFIX)
+#else
+# define LOG_INFO null_stream
+#endif
+
+#if SEVERITY_THRESHOLD >= WARNING
+# define LOG_WARNING (EndLine(), std::cout << PREFIX)
+#else
+# define LOG_WARNING null_stream
+#endif
+
+#if SEVERITY_THRESHOLD >= ERROR
+# define LOG_ERROR (EndLine(), std::cout << PREFIX)
+#else
+# define LOG_ERROR null_stream
+#endif
+
+#if SEVERITY_THRESHOLD >= FATAL
+# define LOG_FATAL (EndLine(), std::cout << PREFIX)
+#else
+# define LOG_FATAL null_stream
+#endif
 
 # define DIE(M, ...) do { \
   printf("DIE %s:%d (%s) -- ", __FILENAME__, __LINE__, __FUNCTION__); \

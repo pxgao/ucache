@@ -66,9 +66,10 @@ void CacheServer::connect_master(string server_name, int portno) {
   serv_addr.sin_port = htons(portno);
   for (int count = 0; connect(master_sock,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0; count++) {
     LOG_ERROR << "Error connecting to master " << strerror(errno) << " attempt " << count;
-    sleep(1);
     if (count > 10)
-      DIE("Failed to connect to server");
+      sleep(20);
+    else
+      sleep(1);
   }
   pthread_t t;
   if(pthread_create(&t, NULL, &CacheServer::recv_thread_helper, this)) 

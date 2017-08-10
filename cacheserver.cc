@@ -230,6 +230,8 @@ void CacheServer::send(string name, string msg) {
 }
 
 void CacheServer::run() {
+  while(true)
+    sleep(1000);
   char recv_buf[MSGSIZE];
 
   //Create message queue

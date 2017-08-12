@@ -167,12 +167,9 @@ class CacheClient:
 
   def get_master_ip(self):
     self.log.debug("Getting master ip address")
-    if os.path.isfile("/home/ubuntu/conf/master"):
-      with open('/home/ubuntu/conf/master', 'r') as content_file:
-        return content_file.read().strip()
-    elif os.path.isfile("/dev/shm/master"):
-      with open('/dev/shm/master', 'r') as content_file:
-        return content_file.read().strip()
+    with open('/dev/shm/master', 'r') as content_file:
+      return content_file.read().strip()
+    
 
   def shm_name(self, bucket, key, consistency):
     return ("~" if consistency else "") + bucket + "~" + key.replace("/", "~")

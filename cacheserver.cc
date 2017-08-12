@@ -15,6 +15,7 @@
 #include <netinet/tcp.h>
 #include <stdio.h>
 #include <memory>
+#include <fstream>
 
 #define MSGSIZE 256
 #define THRDPOOLSIZE 1
@@ -49,6 +50,9 @@ CacheServer::~CacheServer() {
 
 void CacheServer::connect_master(string server_name, int portno) {
   LOG_INFO << "Connect to master server " << server_name << ":" << portno;
+  ofstream master_file("/dev/shm/master");
+  master_file << server_name;
+  master_file.close();
   struct sockaddr_in serv_addr;
   struct hostent *server; 
   master_sock = socket(AF_INET, SOCK_STREAM, 0);

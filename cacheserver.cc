@@ -81,7 +81,7 @@ void CacheServer::connect_master(string server_name, int portno) {
 
   int id = send_master("new_server|" + to_string(port));
   auto ack = recv_master(id);
-  if (ack->size() != 2 || ack->at(0) != "new_server_ack")
+  if (ack->size() != 3 || ack->at(0) != "new_server_ack")
     DIE("Error return msg");
   ip = ack->at(1);//TODO: not correct
 }

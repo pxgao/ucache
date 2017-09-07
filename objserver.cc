@@ -8,6 +8,7 @@
 #include <netinet/in.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
+#include <csignal>
 
 ObjServer::ObjServer(int port) :
   port(port) {
@@ -17,6 +18,12 @@ ObjServer::ObjServer(int port) :
 void ObjServer::start_obj_server() {
   if ((obj_server_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
     DIE("Socket failure");
+
+  sigset_t signal_mask;
+  sigemptyset (&signal_mask);
+  sigaddset (&signal_mask, SIGPIPE);
+  if ( pthread_sigmask(SIG_BLOCK, &signal_mask, NULL) )
+    LOG_ERROR << "error setting sigmask";
 
   int yes = 1;
   if (setsockopt(obj_server_sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)))

@@ -19,11 +19,14 @@
 #include <sys/sendfile.h>
 #include <iosfwd>
 #include <netinet/tcp.h>
+#include <exception>
 
 #define BUFSIZE 1024 * 1500
 #define STORAGE "/dev/shm/cache/"
 #define min(a,b) (a<b?a:b)
 using namespace std;
+
+
 
 ObjWorker::ObjWorker(ObjServer &objserver, int socket)
   : objserver(objserver)
@@ -35,6 +38,7 @@ ObjWorker::ObjWorker(ObjServer &objserver, int socket)
   int tcp_send_buf = BUFSIZE * 10;
   if (setsockopt(socket, SOL_SOCKET, SO_SNDBUF, &tcp_send_buf, sizeof(tcp_send_buf)) < 0)
     LOG_ERROR << "Error setsockopt";
+  remote_ip = get_remote_ip(socket);
 }
 
 void ObjWorker::exit()
@@ -44,9 +48,32 @@ void ObjWorker::exit()
   pthread_exit(nullptr);
 }
 
+string ObjWorker::get_remote_ip(int socket) {
+  socklen_t len;
+  struct sockaddr_storage addr;
+  char ipstr[INET6_ADDRSTRLEN];
+  int port;
+  
+  len = sizeof addr;
+  getpeername(socket, (struct sockaddr*)&addr, &len);
+  
+  if (addr.ss_family == AF_INET) {
+    struct sockaddr_in *s = (struct sockaddr_in *)&addr;
+    port = ntohs(s->sin_port);
+    inet_ntop(AF_INET, &s->sin_addr, ipstr, sizeof ipstr);
+  } else {
+    struct sockaddr_in6 *s = (struct sockaddr_in6 *)&addr;
+    port = ntohs(s->sin6_port);
+    inet_ntop(AF_INET6, &s->sin6_addr, ipstr, sizeof ipstr);
+  }
+  return ipstr;
+
+}
+
+
 int ObjWorker::reply(int socket, const char* msg, int size, int retry, bool silent) {
   if (!silent)
-    LOG_DEBUG << "Replying: " << msg;
+    LOG_DEBUG << "Replying(" << remote_ip << "): " << msg;
   int ret, i;
   int sent = 0;
   //int cork = 0;
@@ -62,7 +89,13 @@ int ObjWorker::reply(int socket, const char* msg, int size, int retry, bool sile
       if (remaining == 0)
         break;
     } else {
-      //LOG_DEBUG << "Can't write socket, ret = " << ret << " error = " << std::strerror(errno);
+      if (errno == EAGAIN)
+        continue;
+      else if (errno == ECONNRESET || errno == EPIPE) {
+        LOG_ERROR << "Can't write socket," << std::strerror(errno);
+        throw exception();
+      } else
+        LOG_DEBUG << "Can't write socket, ret = " << ret << " error = " << std::strerror(errno);
     }
   }
   if (retry > 0 && i >= retry)
@@ -85,7 +118,7 @@ void ObjWorker::handle_get(vector<string> parts){
     reply(socket, response.c_str(), response.size());
   } else {
     LOG_DEBUG << "Found file " << fn;
-    string response("get_success|" + parts[1] + "|" + to_string(fileStat.st_size) + ";");
+    string response("get_success|" + fn.substr(strlen(STORAGE)) + "|" + to_string(fileStat.st_size) + ";");
     reply(socket, response.c_str(), response.size());
 #if USESENDFILE
     int shm_file = open(fn.c_str(), O_RDONLY);
@@ -107,8 +140,10 @@ void ObjWorker::handle_get(vector<string> parts){
         break;
       }
     }
-    if (total_sent != fileStat.st_size)
+    if (total_sent != fileStat.st_size) {
       LOG_ERROR << "sendfile fail, total_sent = " << total_sent << " fsize " << fileStat.st_size;
+      DIE("send fail");
+    }
     LOG_DEBUG << "Sent " << total_sent << " bytes to client";
     close(shm_file);
 #else
@@ -220,25 +255,30 @@ void ObjWorker::handle_put(vector<string> parts, char* remaining_start, int rema
 void ObjWorker::run() {
   char buffer[1024];
 
-  for (;;) {
-    int read_size;
-    while ((read_size = read(socket, buffer, sizeof(buffer))) > 0) {
-      for (int i = 0; i < read_size; ++i) {
-        if (buffer[i] == ';') {
-          buffer[i] = '\0';
-          string msg(buffer);
-          LOG_DEBUG << "Received msg: " << msg << " read_size:" << read_size;
-          vector<string> parts;
-          boost::split(parts, msg, boost::is_any_of("|"));
-          if(parts[0] == "get") {
-            handle_get(parts);
-	  } else if (parts[0] == "put") {
-            handle_put(parts, buffer + i + 1, read_size - (i + 1));
+  try{
+    for (;;) {
+      int read_size;
+      while ((read_size = read(socket, buffer, sizeof(buffer))) > 0) {
+        for (int i = 0; i < read_size; ++i) {
+          if (buffer[i] == ';') {
+            buffer[i] = '\0';
+            string msg(buffer);
+            LOG_DEBUG << "Received msg (" << remote_ip << ")" << msg << " read_size:" << read_size;
+            vector<string> parts;
+            boost::split(parts, msg, boost::is_any_of("|"));
+            if(parts[0] == "get") {
+              handle_get(parts);
+  	  } else if (parts[0] == "put") {
+              handle_put(parts, buffer + i + 1, read_size - (i + 1));
+            }
+            break;
           }
-          break;
         }
       }
     }
+  } catch (exception& e) {
+    LOG_ERROR << "Caught exception";
+    return;
   }
 }
 

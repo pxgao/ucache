@@ -10,6 +10,11 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/tcp.h>
+#include <csignal>
+
+void signal_callback_handler(int signum){
+  LOG_ERROR << "Caught signal SIGPIPE " << signum;
+}
 
 Master::Master(unsigned short port)
     : threads_counter(0)
@@ -66,6 +71,12 @@ void Master::run() {
         return;
     }
 
+    sigset_t signal_mask;
+    sigemptyset (&signal_mask);
+    sigaddset (&signal_mask, SIGPIPE);
+    if ( pthread_sigmask(SIG_BLOCK, &signal_mask, NULL) )
+      LOG_ERROR << "error setting sigmask";
+
     for (;;) {
         int worker_socket = accept(socket_fd, nullptr, nullptr);
         if (worker_socket < 0) {
@@ -96,6 +107,7 @@ void Master::run() {
 
 
 int main() {
+  signal(SIGPIPE, SIG_IGN);
   Master m(1988);
   m.run();
 }

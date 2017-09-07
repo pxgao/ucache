@@ -18,6 +18,7 @@ public:
 protected:
   void init();
   void exit();
+  string readline();
   string handle_msg(string);
   string handle_new_server(vector<string>);
   string handle_cache(vector<string>);
@@ -28,9 +29,13 @@ protected:
   string handle_consistent_unlock(vector<string>);
   string handle_consistent_delete(vector<string>);
   string handle_delete(vector<string>);
+  string handle_lineage(vector<string>);
+  string handle_failover_write_update(vector<string>);
+  string handle_force_release_lock(vector<string>);
 
   Master &master;
   int socket;
+  uint lambda_seq;
   string ip;
   string port;
   string addr;

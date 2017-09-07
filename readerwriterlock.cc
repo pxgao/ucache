@@ -1,18 +1,31 @@
 #include "readerwriterlock.h"
 #include "log.h"
+#include <boost/algorithm/string.hpp>
+#include <vector>
 
-string ReaderWriterLock::reader_lock(string reader, int max_duration) {
+ReaderWriterLock::ReaderWriterLock() : seq_num(0) {
+}
+
+string ReaderWriterLock::reader_lock(string reader, int max_duration, uint lambda_seq, bool snap_iso) {
   string ret = "fail";
   lock.lock();
   LOG_DEBUG << "reader " << reader << " num owner = " << owners.size() << " write = " << write_mode;
   if (owners.size() == 0) {
-    owners[reader] = chrono::system_clock::now() + chrono::seconds(max_duration);
-    write_mode = false;
-    ret = "success";
+    if (!snap_iso || lambda_seq >= seq_num) {
+      owners[reader] = chrono::system_clock::now() + chrono::seconds(max_duration);
+      write_mode = false;
+      ret = "success";
+    } else {
+      ret = "exception: key_seq_num_err";
+    }
   } else if (!write_mode) {
     if (owners.find(reader) == owners.end()) {
-      owners[reader] = chrono::system_clock::now() + chrono::seconds(max_duration);
-      ret = "success";
+      if (!snap_iso || lambda_seq >= seq_num) {
+        owners[reader] = chrono::system_clock::now() + chrono::seconds(max_duration);
+        ret = "success";
+      } else {
+        ret = "exception: key_seq_num_err";
+      }
     } else {
       ret = "exception: you already have the lock";
     }
@@ -36,20 +49,26 @@ string ReaderWriterLock::reader_unlock(string reader) {
     ret = "exception: can't find reader";
   } else {
     owners.erase(reader);
+    version_locations[seq_num].push_back(reader);
     ret = "success";
   }
   lock.unlock();
   return ret;
 }
 
-string ReaderWriterLock::writer_lock(string writer, int max_duration) {
+string ReaderWriterLock::writer_lock(string writer, int max_duration, uint lambda_seq, bool snap_iso) {
   string ret = "fail";
   lock.lock();
-  LOG_DEBUG << "writer " << writer << " num owner = " << owners.size() << " write = " << write_mode;
+  LOG_DEBUG << "writer " << writer << " num owner = " << owners.size() << " write = " << write_mode << " seq_num = " << seq_num << " lambda_seq = " << lambda_seq;
   if (owners.size() == 0) {
-    owners[writer] = chrono::system_clock::now() + chrono::seconds(max_duration);
-    write_mode = true;
-    ret = "success";
+    if (!snap_iso || lambda_seq >= seq_num) {
+      owners[writer] = chrono::system_clock::now() + chrono::seconds(max_duration);
+      write_mode = true;
+      seq_num = lambda_seq;
+      ret = "success";
+    } else {
+      ret = "exception: key_seq_num_err";
+    }
   }
   lock.unlock();
   return ret;
@@ -70,8 +89,81 @@ string ReaderWriterLock::writer_unlock(string writer) {
     ret = "exception: can't find writer";
   } else {
     owners.erase(writer);
+    version_history.push_back(seq_num);
+    vector<string> v;
+    v.push_back(writer);
+    version_locations[seq_num] = v;
     ret = "success";
   }
   lock.unlock();
   return ret;
+}
+
+
+
+string ReaderWriterLock::get_locations(uint version) {
+  string ret = "";
+  int count = 0;
+  for (auto l : version_locations[version]){
+    ret += l + ";";
+    count += 1;
+    if(count > 3)
+      break;
+  }
+  LOG_DEBUG << "returning " << ret;
+  return ret;
+}
+
+string ReaderWriterLock::get_locations_with_from(uint version, string from) {
+  string ret = "";
+  vector<string> parts;
+  int count = 0;
+  for (auto l : version_locations[version]) {
+    LOG_DEBUG << "location " << l;
+    boost::split(parts, l, boost::is_any_of("@"));
+    if (parts[0] == from)
+      return "use_local";
+    ret += parts[0] + ";";
+    count += 1;
+    if (count > 3)
+      break;
+  }
+  LOG_DEBUG << "returning " << ret;
+  return ret;
+}
+
+string ReaderWriterLock::update_version_location(uint version, string location) {
+  string ret = "success";
+  lock.lock();
+  if (version == seq_num) {
+    assert(write_mode);
+    owners.clear();
+    owners[location] = chrono::system_clock::now() + chrono::seconds(1000);
+  } else if (version < seq_num) {
+    version_locations[seq_num].clear();
+    version_locations[seq_num].push_back(location);
+  } else {
+    assert(false);
+  }
+  lock.unlock();
+  return ret;
+}
+
+string ReaderWriterLock::force_release_lock() {
+  LOG_DEBUG << "force release lock";
+  lock.lock();
+  if (write_mode) {
+    if( owners.size() > 0) {
+      version_history.push_back(seq_num);
+      vector<string> v;
+      v.push_back(owners.begin()->first);
+      version_locations[seq_num] = v;
+      LOG_DEBUG << "owner " << owners.begin()->first << " pushed to history";
+    } else {
+      LOG_DEBUG << "owner empty";
+    }
+  }
+  owners.clear();
+  lock.unlock(); 
+  return "success";
 }

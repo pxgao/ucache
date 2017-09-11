@@ -143,7 +143,8 @@ string ReaderWriterLock::update_version_location(uint version, string location) 
     version_locations[seq_num].clear();
     version_locations[seq_num].push_back(location);
   } else {
-    assert(false);
+    LOG_DEBUG << "version " << version << " seq_num " << seq_num << " location " << location;
+    //assert(false);
   }
   lock.unlock();
   return ret;

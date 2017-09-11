@@ -6,18 +6,17 @@
 
 using namespace std;
 
-class ObjServer;
 
 class ObjWorker
 {
 public:
-  ObjWorker(ObjServer &cacheserver, int socket);
+  ObjWorker(int socket);
   void run();
   static void *pthread_helper(void * worker);
+  void handle_msg();
 
 protected:
   void exit();
-  ObjServer &objserver;
   int socket;
   string remote_ip;
 private:

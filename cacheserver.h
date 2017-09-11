@@ -2,6 +2,7 @@
 #define CACHESERVER_H
 
 #define ENABLES3 0
+#define USE_EPOLL 1
 
 #include <map>
 #include <vector>
@@ -22,6 +23,7 @@
 #include "threadpool.h"
 #include "objserver.h"
 #include "objclient.h"
+#include "epollobjserver.h"
 #include <memory>
 using namespace std;
 
@@ -42,7 +44,11 @@ private:
   int master_sock;
   string ip;
   int port;
+#if USE_EPOLL == 1
+  EpollObjServer obj_server;
+#else
   ObjServer obj_server;
+#endif
   ObjClient obj_client;
   map<string, mqd_t> mqd_map;
   boost::shared_mutex mqd_map_lock;  

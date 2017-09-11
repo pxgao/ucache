@@ -28,9 +28,7 @@ using namespace std;
 
 
 
-ObjWorker::ObjWorker(ObjServer &objserver, int socket)
-  : objserver(objserver)
-  , socket(socket) {
+ObjWorker::ObjWorker(int socket) : socket(socket) {
   fcntl(socket, F_SETFL, fcntl(socket, F_GETFL, 0) | O_NONBLOCK);
   int yes = 1;
   if (setsockopt(socket, SOL_TCP/*IPPROTO_TCP*/, TCP_NODELAY, &yes, sizeof(int)))
@@ -252,29 +250,33 @@ void ObjWorker::handle_put(vector<string> parts, char* remaining_start, int rema
 
 }
 
-void ObjWorker::run() {
+void ObjWorker::handle_msg() {
   char buffer[1024];
-
-  try{
-    for (;;) {
-      int read_size;
-      while ((read_size = read(socket, buffer, sizeof(buffer))) > 0) {
-        for (int i = 0; i < read_size; ++i) {
-          if (buffer[i] == ';') {
-            buffer[i] = '\0';
-            string msg(buffer);
-            LOG_DEBUG << "Received msg (" << remote_ip << ")" << msg << " read_size:" << read_size;
-            vector<string> parts;
-            boost::split(parts, msg, boost::is_any_of("|"));
-            if(parts[0] == "get") {
-              handle_get(parts);
-  	  } else if (parts[0] == "put") {
-              handle_put(parts, buffer + i + 1, read_size - (i + 1));
-            }
-            break;
-          }
+  int read_size;
+  while ((read_size = read(socket, buffer, sizeof(buffer))) > 0) {
+    for (int i = 0; i < read_size; ++i) {
+      if (buffer[i] == ';') {
+        buffer[i] = '\0';
+        string msg(buffer);
+        LOG_DEBUG << "Received msg (" << remote_ip << ")" << msg << " read_size:" << read_size;
+        vector<string> parts;
+        boost::split(parts, msg, boost::is_any_of("|"));
+        if(parts[0] == "get") {
+          handle_get(parts);
+        } else if (parts[0] == "put") {
+          handle_put(parts, buffer + i + 1, read_size - (i + 1));
         }
+        break;
       }
+    }
+  }
+
+}
+
+void ObjWorker::run() {
+  try{
+    while (true) {
+      handle_msg();
     }
   } catch (exception& e) {
     LOG_ERROR << "Caught exception";

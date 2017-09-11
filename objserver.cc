@@ -75,7 +75,7 @@ void ObjServer::run_obj_worker() {
         LOG_ERROR << "error: unable to accept client" << std::endl;
     } else {
       LOG_ERROR << "new client";
-      ObjWorker * worker = new ObjWorker(*this, worker_socket);
+      ObjWorker * worker = new ObjWorker(worker_socket);
       obj_workers.push_back(worker);
 
       pthread_t thread;

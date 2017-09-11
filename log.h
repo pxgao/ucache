@@ -15,7 +15,7 @@
 #define ERROR 1
 #define FATAL 0
 
-#define SEVERITY_THRESHOLD ERROR
+#define SEVERITY_THRESHOLD DEBUG
 
 extern std::ostream null_stream;
 

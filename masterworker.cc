@@ -37,6 +37,7 @@ void MasterWorker::init()
   char ip_str[20];
   strcpy(ip_str, inet_ntoa(addr.sin_addr));
   ip = ip_str;
+  this->addr = ip;
   LOG_DEBUG << "Connection from " << ip;
 }
 
@@ -145,10 +146,15 @@ string MasterWorker::handle_msg(string msg) {
 }
 
 string MasterWorker::handle_new_server(vector<string> parts) {
+  //new_server|port|lambda_id(optional)
   port = parts[1];
   addr = ip + ":" + port; //TODO addr should be cacheserver addr, not lambda addr
   LOG_DEBUG << "handle new_server from " << addr;
-  lambda_seq = master.registry.get_lambda_seq();
+  if (parts.size() < 3 || parts[2] == "") {
+    lambda_seq = master.registry.get_lambda_seq();
+  } else {
+    lambda_seq = atoi(parts[2].substr(6).c_str());
+  }
   return "new_server_ack|" + parts[1] + "|" + to_string(lambda_seq);
 }
 
@@ -182,26 +188,34 @@ string MasterWorker::handle_consistent_lock(vector<string> parts) {
   LOG_DEBUG << "handle consistent_lock from " << addr << " pre_check_loc " << pre_check_loc;
 
   if (parts[1] == "write" || (parts[5] == "s3" && pre_check_loc == "")) {
+    LOG_DEBUG << "write branch";
     string ret, loc;
-    if (parts[8] == "recent") {
-      ret = master.registry.consistent_write_lock(parts[2], addr, parts[3], atoi(parts[4].c_str()), parts[6] == "snap");
-      loc = master.registry.get_location(parts[2], addr);
-      if(ret == "success") {
-        uint lambda_id = atoi(parts[3].substr(6).c_str());
-        if( parts[7] == "check_loc" && parts[5] != "s3") { //check_loc iff open as rw
-          uint key_version = master.registry.get_key_version(parts[2], true);
-          master.registry.register_lineage(lambda_id, parts[2], key_version);
-        }
-        master.registry.register_lock(lambda_id, parts[2], true);
+    ret = master.registry.consistent_write_lock(parts[2], addr, parts[3], atoi(parts[4].c_str()), parts[6] == "snap");
+    loc = master.registry.get_location(parts[2], addr);
+    if(ret == "success") {
+      //LOG_DEBUG << "ret = success";
+      uint lambda_id = atoi(parts[3].substr(6).c_str());
+      if( parts[7] == "check_loc" && parts[5] != "s3") { //check_loc iff open as rw
+        //LOG_DEBUG << "check_loc and s3";
+        uint key_version = master.registry.get_key_version(parts[2], true);
+        master.registry.register_lineage(lambda_id, parts[2], key_version);
       }
-    } else {
-      ret = "success";
-      loc = master.registry.get_location_version(parts[2], addr, atoi(parts[8].c_str()));
+      master.registry.register_lock(lambda_id, parts[2], true);
+    } else { 
+      if (parts[8] == "recent") {
+        //can't lock 
+      } else {
+        //LOG_DEBUG << "part[8] != recent";
+        ret = "success";
+        loc = master.registry.get_location_version(parts[2], addr, atoi(parts[8].c_str()));
+      }
     }
     return "consistent_lock_ack|" + ret + "|write|" + loc;
   } else if (parts[1] == "read") {
+    LOG_DEBUG << "read branch";
     string ret, loc;
     if (parts[8] == "recent") {
+      //LOG_DEBUG << "parts[8] == recent";
       ret = master.registry.consistent_read_lock(parts[2], addr, parts[3], atoi(parts[4].c_str()), parts[6] == "snap");
       loc = master.registry.get_location(parts[2], addr);
       if(ret == "success") {
@@ -211,8 +225,15 @@ string MasterWorker::handle_consistent_lock(vector<string> parts) {
         master.registry.register_lock(lambda_id, parts[2], false);
       }
     } else {
+      //LOG_DEBUG << "parts[8] != recent";
       ret = "success";
-      loc = master.registry.get_location_version(parts[2], addr, atoi(parts[8].c_str()));
+      if (parts[5] != "s3") {
+        //LOG_DEBUG << "get_location_version";
+        loc = master.registry.get_location_version(parts[2], addr, atoi(parts[8].c_str()));
+      } else { //you just want the newest version
+        //LOG_DEBUG << "get_location";
+        loc = master.registry.get_location(parts[2], addr);
+      }
     }
     return "consistent_lock_ack|" + ret + "|read|" + loc;
   } else {

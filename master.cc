@@ -17,12 +17,34 @@ void signal_callback_handler(int signum){
 }
 
 Master::Master(unsigned short port)
-    : threads_counter(0)
-    , port(port)
+    : port(port)
     , workers()
     , socket_fd(-1)
 {
+#if USE_EPOLL == 1
+  for (int i = 0; i < EPOLL_THREADS; i++) {
+    epoll_master_workers.push_back(new EpollMasterWorker());
+  }
+#endif
 }
+
+int Master::make_socket_non_blocking (int sfd) {
+  int flags, s;
+  flags = fcntl (sfd, F_GETFL, 0);
+  if (flags == -1) {
+    perror ("fcntl");
+    return -1;
+  }
+
+  flags |= O_NONBLOCK;
+  s = fcntl (sfd, F_SETFL, flags);
+  if (s == -1) {
+    perror ("fcntl");
+    return -1;
+  }
+  return 0;
+}
+
 
 Master::~Master()
 {
@@ -87,10 +109,16 @@ void Master::run() {
                 LOG_ERROR << "error: unable to accept client " << strerror(errno);
             }
         } else {
-            LOG_DEBUG << "new client (total = " << (threads_counter + 1) << ")";
+            LOG_ERROR << "new client";
             MasterWorker * worker = new MasterWorker(*this, worker_socket);
+#if USE_EPOLL == 1
+            make_socket_non_blocking(worker_socket);
+            int r1 = rand() % EPOLL_THREADS;
+            int r2 = rand() % EPOLL_THREADS;
+            EpollMasterWorker* selected = epoll_master_workers[r1]->get_count() < epoll_master_workers[r2]->get_count()?epoll_master_workers[r1]:epoll_master_workers[r2];
+            selected->add(worker_socket, worker);
+#else
             workers.push_back(worker);
-
             pthread_t thread;
             if (pthread_create(&thread, 0, &MasterWorker::pthread_helper, worker)) {
                 LOG_ERROR << "error: unable to create thread";
@@ -100,6 +128,7 @@ void Master::run() {
                 LOG_ERROR << "error: unable to detach thread";
                 continue;
             }
+#endif
         }
     }
     cleanup();

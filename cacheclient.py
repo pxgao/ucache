@@ -6,7 +6,8 @@ import threading
 import time
 import boto3
 import errno
-
+import multiprocessing 
+import concurrent.futures as fs
 STORAGE = "/dev/shm/cache/"
 
 
@@ -184,6 +185,12 @@ class FInputStream:
       if self.consistency:
         self.client.direct_unlock(self.bucket, self.key, write = False, modified = True, s3 = self.s3)
       else:
+        self.client.log.debug("sending put to master: %s/%s" % (self.bucket, self.key))
+        self.client.send_put(self.bucket, self.key, False)
+        self.client.log.debug("waiting master to ack")
+        ack = self.client.master.recv(1024)
+        self.client.log.debug("master acked")
+
         self.client.cache_reg(self.bucket, self.key, consistency = False)
 
   def set_socket_timeout(self, timeout):
@@ -194,6 +201,32 @@ class FInputStream:
 
 class LockException(Exception):
   pass
+
+def s3_recv_proc(tmp_fn, bucket, key, consistency, size):
+  try:
+    print "s3_recv_proc: Start reading %s:%s from s3, size %s" % (bucket, key, size)
+    f = open(tmp_fn, "wb")
+    s3 = boto3.client("s3")
+    obj = s3.get_object(Bucket = bucket, Key = key)
+    total_read = 0
+    while True:
+      try:
+        data = obj["Body"].read(min(100 * 1024, size - total_read))
+      except Exception as e:
+        if "Read timed out" in str(e):
+          print "s3_recv_proc: %s" % e
+          continue
+        else:
+          raise e
+      if len(data) == 0:
+        break
+      total_read += len(data)
+      f.write(data)
+    f.close()
+    assert size == total_read
+    print "s3_recv_proc: Done reading %s:%s from s3, size %s" % (bucket, key, size)
+  except Exception as e:
+    print str(e)
 
 class CacheClient:
   def __init__(self, master_ip = None, extra = {}):
@@ -216,6 +249,8 @@ class CacheClient:
     self.sockets = {}
     self.closed = False
     self.commit_write_done = False
+    self.executor = multiprocessing.Pool(processes=3)
+    #self.executor = fs.ProcessPoolExecutor(max_workers=8)
 
     self.master = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     self.master.connect((self.master_ip, 1988))
@@ -333,6 +368,7 @@ class CacheClient:
     self.log.debug("peer read done. size %s" % size)
     return (size, tmp_key)
 
+
   def s3_recv(self, f, obj, bucket, key, consistency, size):
     self.log.debug("s3 receive")
     total_read = 0
@@ -345,12 +381,7 @@ class CacheClient:
     f.close()
     self.log.debug("all data received, size %s, total_read %s" % (size, total_read))
     assert size == total_read
-    if not consistency:
-      self.log.debug("sending put to master")
-      self.send_put(bucket, key, False)
-      self.log.debug("waiting master to ack")
-      ack = self.master.recv(1024)
-      self.log.debug("master acked")
+
     self.log.debug("s3_recv done")
 
   def s3_read(self, name, bucket, key, consistency):
@@ -361,8 +392,13 @@ class CacheClient:
     size = obj['ContentLength']
     self.log.debug("size %s" % size)
     f = open(tmp_fn, "wb")
-    if self.s3_bg_read and size > 100 * 1024:
-      threading.Thread(target=self.s3_recv, args=(f, obj, bucket, key, consistency, size)).start()
+    if self.s3_bg_read and size > 5 * 1024 * 1024:
+      #threading.Thread(target=self.s3_recv, args=(f, obj, bucket, key, consistency, size)).start()
+      f.close()
+      self.log.debug("Async s3_recv")
+      #multiprocessing.Process(target=CacheClient.s3_recv_proc, args=(tmp_fn, bucket, key, consistency, size)).start()
+      self.executor.apply_async(s3_recv_proc, (tmp_fn, bucket, key, consistency, size,))
+      #self.executor.submit(s3_recv_proc, tmp_fn, bucket, key, consistency, size)
     else:
       data = obj["Body"].read()
       f.write(data)

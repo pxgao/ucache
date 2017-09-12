@@ -20,12 +20,12 @@ MasterWorker::MasterWorker(Master &master, int socket)
   : master(master)
   , socket(socket)
 {
+  init();
 }
 
 
 void MasterWorker::init()
 {
-  ++master.threads_counter;
   int yes = 1;
   if (setsockopt(socket, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(int)))
     LOG_ERROR << "error: unable to set socket option TCP_NODELAY";
@@ -44,9 +44,6 @@ void MasterWorker::init()
 void MasterWorker::exit()
 {
   close(socket);
-  --master.threads_counter;
-  LOG_INFO << "client lost (total = " << master.threads_counter << ")";
-  pthread_exit(nullptr);
 }
 
 string MasterWorker::readline() {
@@ -66,43 +63,47 @@ string MasterWorker::readline() {
   return line;
 }
 
-void MasterWorker::run() {
-  init();
+void MasterWorker::do_action() {
   vector<string> cmds;
   vector<string> rets;
   string ret, msg;
-  while (true) {
-    msg = readline();
-    if (msg == "")
-      break;
-    cmds.clear();
-    rets.clear();
-    LOG_DEBUG << "Received msg<-" << addr << ":lambda" << lambda_seq << " " << msg;
-    boost::split(cmds, msg, boost::is_any_of("/"));        
-    for (auto const& cmd : cmds) {
-      rets.push_back(handle_msg(cmd));
-    }
-    ret = boost::algorithm::join(rets, "/");
-    LOG_DEBUG << "Sending msg->" << addr << ":lambda" << lambda_seq << " " << ret;
-    string response = ret + "\n";
-    assert(response.size() < 1024 * 1024);
-    int total_written = 0, written = 0;
-    while(true) {
-      if ( (written = write(socket, response.c_str() + total_written, response.size() - total_written)) < 0) {
-        if (errno == EAGAIN)
-          continue;
-        else if (errno == ECONNRESET || errno == EPIPE)
-          return;
-        else {
-          std::cerr << "error: unable to write socket " << socket << std::endl;
-          break;
-        }
-      }
-      total_written += written;
-      if (total_written >= response.size())
+  msg = readline();
+  if (msg == "")
+    return;
+  cmds.clear();
+  rets.clear();
+  LOG_DEBUG << "Received msg<-" << addr << ":lambda" << lambda_seq << " " << msg;
+  boost::split(cmds, msg, boost::is_any_of("/"));        
+  for (auto const& cmd : cmds) {
+    rets.push_back(handle_msg(cmd));
+  }
+  ret = boost::algorithm::join(rets, "/");
+  LOG_DEBUG << "Sending msg->" << addr << ":lambda" << lambda_seq << " " << ret;
+  string response = ret + "\n";
+  assert(response.size() < 1024 * 1024);
+  int total_written = 0, written = 0;
+  while(true) {
+    if ( (written = write(socket, response.c_str() + total_written, response.size() - total_written)) < 0) {
+      if (errno == EAGAIN)
+        continue;
+      else if (errno == ECONNRESET || errno == EPIPE)
+        return;
+      else {
+        std::cerr << "error: unable to write socket " << socket << std::endl;
         break;
+      }
     }
-    assert(total_written == response.size());
+    total_written += written;
+    if (total_written >= response.size())
+      break;
+  }
+  assert(total_written == response.size());
+
+}
+
+void MasterWorker::run() {
+  while (true) {
+    do_action();
   }
   LOG_DEBUG << "Connection disconnected";
   exit();

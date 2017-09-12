@@ -4,6 +4,7 @@
 #include <mutex>
 #include <set>
 #include <map>
+#include <unordered_map>
 #include "readerwriterlock.h"
 #include <boost/thread.hpp>
 #include <boost/thread/shared_mutex.hpp>
@@ -77,10 +78,10 @@ public:
   string force_release_lock(vector<uint> lambdas);
 private:
   KeyEntry* get_key_entry(string key);
-  map<string, KeyEntry*> keys;
+  unordered_map<string, KeyEntry*> keys;
   boost::shared_mutex lock;
   atomic<uint> lambda_seq;
-  map<uint, LambdaEntry*> lineage;
+  unordered_map<uint, LambdaEntry*> lineage;
   boost::shared_mutex lineage_lock;
 };
 

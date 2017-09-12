@@ -15,7 +15,7 @@ target_link_libraries(cacheserver rt)
 
 
 project (master)
-add_executable(master master.cc masterworker.cc log.cc masterregistry.cc readerwriterlock.cc)
+add_executable(master master.cc masterworker.cc log.cc masterregistry.cc readerwriterlock.cc epollmasterworker.cc)
 
 target_link_libraries(master pthread)
 target_link_libraries(master boost_thread)

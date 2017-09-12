@@ -14,6 +14,7 @@ public:
   MasterWorker(Master &master, int socket);
   void run();
   static void *pthread_helper(void * worker);
+  void do_action();
 
 protected:
   void init();

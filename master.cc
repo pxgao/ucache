@@ -22,7 +22,9 @@ Master::Master(unsigned short port)
     , socket_fd(-1)
 {
 #if USE_EPOLL == 1
-  for (int i = 0; i < EPOLL_THREADS; i++) {
+  num_core = sysconf(_SC_NPROCESSORS_ONLN);
+  LOG_MSG << "Detected " << num_core << " cores";  
+  for (int i = 0; i < num_core * 2; i++) {
     epoll_master_workers.push_back(new EpollMasterWorker());
   }
 #endif
@@ -73,7 +75,7 @@ bool Master::init()
     if (listen(socket_fd, port) < 0)
       DIE("error: cannot listen on port ");
 
-    LOG_INFO << "listening on port " << port;
+    LOG_MSG << "listening on port " << port;
 
     return true;
 }
@@ -109,12 +111,12 @@ void Master::run() {
                 LOG_ERROR << "error: unable to accept client " << strerror(errno);
             }
         } else {
-            LOG_ERROR << "new client";
+            LOG_DEBUG << "new client";
             MasterWorker * worker = new MasterWorker(*this, worker_socket);
 #if USE_EPOLL == 1
             make_socket_non_blocking(worker_socket);
-            int r1 = rand() % EPOLL_THREADS;
-            int r2 = rand() % EPOLL_THREADS;
+            int r1 = rand() % epoll_master_workers.size();
+            int r2 = rand() % epoll_master_workers.size();
             EpollMasterWorker* selected = epoll_master_workers[r1]->get_count() < epoll_master_workers[r2]->get_count()?epoll_master_workers[r1]:epoll_master_workers[r2];
             selected->add(worker_socket, worker);
 #else

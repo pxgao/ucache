@@ -12,7 +12,6 @@
 #include <vector>
 #include "epollmasterworker.h"
 #define USE_EPOLL 1
-#define EPOLL_THREADS 128
 
 class MasterWorker;
 
@@ -35,6 +34,7 @@ protected:
     std::uint16_t port;
     std::list<MasterWorker *> workers; // One worker per client
     int socket_fd;
+    int num_core;
 };
 
 

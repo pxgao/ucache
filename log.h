@@ -8,12 +8,13 @@
 #include <iostream>
 #include <sstream>
 
-#define TRACE 5
-#define DEBUG 4
-#define INFO 3
-#define WARNING 2
-#define ERROR 1
-#define FATAL 0
+#define TRACE 6
+#define DEBUG 5
+#define INFO 4
+#define WARNING 3
+#define ERROR 2
+#define FATAL 1
+#define MSG 0
 
 #define SEVERITY_THRESHOLD ERROR
 
@@ -43,7 +44,7 @@ public:
 # define LOG_TRACE null_stream
 #endif
 
-#if SEVERITY_THRESHOLD >= DEUBG
+#if SEVERITY_THRESHOLD >= DEBUG
 # define LOG_DEBUG LOG_X
 #else
 # define LOG_DEBUG null_stream
@@ -71,6 +72,12 @@ public:
 # define LOG_FATAL LOG_X
 #else
 # define LOG_FATAL null_stream
+#endif
+
+#if SEVERITY_THRESHOLD >= MSG
+# define LOG_MSG LOG_X
+#else
+# define LOG_MSG null_stream
 #endif
 
 # define DIE(M, ...) do { \

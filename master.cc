@@ -24,7 +24,7 @@ Master::Master(unsigned short port)
 #if USE_EPOLL == 1
   num_core = sysconf(_SC_NPROCESSORS_ONLN);
   LOG_MSG << "Detected " << num_core << " cores";  
-  for (int i = 0; i < num_core * 2; i++) {
+  for (int i = 0; i < num_core*2; i++) {
     epoll_master_workers.push_back(new EpollMasterWorker());
   }
 #endif

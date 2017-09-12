@@ -78,10 +78,10 @@ public:
   string force_release_lock(vector<uint> lambdas);
 private:
   KeyEntry* get_key_entry(string key);
-  unordered_map<string, KeyEntry*> keys;
+  map<string, KeyEntry*> keys;
   boost::shared_mutex lock;
   atomic<uint> lambda_seq;
-  unordered_map<uint, LambdaEntry*> lineage;
+  map<uint, LambdaEntry*> lineage;
   boost::shared_mutex lineage_lock;
 };
 

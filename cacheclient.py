@@ -8,6 +8,8 @@ import boto3
 import errno
 import multiprocessing 
 import concurrent.futures as fs
+import smart_open
+
 STORAGE = "/dev/shm/cache/"
 
 
@@ -208,10 +210,12 @@ def s3_recv_proc(tmp_fn, bucket, key, consistency, size):
     f = open(tmp_fn, "wb")
     s3 = boto3.client("s3")
     obj = s3.get_object(Bucket = bucket, Key = key)
+    #obj = smart_open.smart_open("s3://%s/%s" % (bucket, key))
     total_read = 0
     while True:
       try:
         data = obj["Body"].read(min(100 * 1024, size - total_read))
+        #data = obj.read(min(100 * 1024, size - total_read))
       except Exception as e:
         if "Read timed out" in str(e):
           print "s3_recv_proc: %s" % e
@@ -226,7 +230,7 @@ def s3_recv_proc(tmp_fn, bucket, key, consistency, size):
     assert size == total_read
     print "s3_recv_proc: Done reading %s:%s from s3, size %s" % (bucket, key, size)
   except Exception as e:
-    print str(e)
+    print "s3_recv_proc: %s" % e
 
 class CacheClient:
   def __init__(self, master_ip = None, extra = {}):
@@ -249,7 +253,7 @@ class CacheClient:
     self.sockets = {}
     self.closed = False
     self.commit_write_done = False
-    self.executor = multiprocessing.Pool(processes=3)
+    self.executor = multiprocessing.Pool(processes=2)
     #self.executor = fs.ProcessPoolExecutor(max_workers=8)
 
     self.master = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

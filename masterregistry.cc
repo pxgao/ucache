@@ -76,16 +76,22 @@ MasterRegistry::MasterRegistry() : lambda_seq(0) {
 
 MasterRegistry::~MasterRegistry() {
   LOG_INFO << "Deleting MasterRegistry";
-  for (auto& kvp : keys)
-    delete kvp.second;
+  for (auto it = keys.begin(); it != keys.end(); it++)
+    delete it->second;
 }
 
 uint MasterRegistry::get_lambda_seq() {
   uint seq = lambda_seq.fetch_add(1);
   auto entry = new LambdaEntry(seq);
+#if USE_TBB
+  LambdaHashMap::accessor acc;
+  lineage.insert(acc, seq);
+  acc->second = entry;
+#else
   lineage_lock.lock();
   lineage[seq] = entry;
   lineage_lock.unlock();
+#endif
   return seq;
 }
 
@@ -102,14 +108,12 @@ uint MasterRegistry::get_key_version(string input_key, bool prev) {
 }
 
 void MasterRegistry::register_lineage(uint lambda, string key, uint version) {
-  lineage_lock.lock_shared();
-  auto entry = lineage.find(lambda);
-  lineage_lock.unlock_shared(); 
-  if (entry == lineage.end()) {
+  auto entry = get_lambda_entry(lambda);
+  if (entry == NULL) {
     LOG_ERROR << "lambda" << lambda << " not exist in lineage";
     assert(false);
   } else {
-    entry->second->depends_on(key, version);
+    entry->depends_on(key, version);
     LOG_DEBUG << "Sucessfully registered lineage for " << lambda << ", key " << key << ", version " << version;
   }
 }
@@ -118,60 +122,61 @@ bool MasterRegistry::reg_key(string key, string location) {
   assert(key.at(0) != '~');
   bool ret = false;
   LOG_DEBUG << "reg_key " << key << " at location " << location;
-  lock.lock_shared();
-  auto key_entry = keys.find(key);
-  lock.unlock_shared();
-  if (key_entry != keys.end()) {
-    if(key_entry->second->consistency) {
+  auto key_entry = get_key_entry(key);
+  if (key_entry != NULL) {
+    if(key_entry->consistency) {
       LOG_DEBUG << key << " is a consistent key";
       ret = false;
     } else {
-      lock.lock();
       LOG_DEBUG << key << " exist, clear key location cache";
-      key_entry->second->clear();
-      lock.unlock();
+      key_entry->clear();
       ret = true;
     }
   } else {
     LOG_DEBUG << key << " does not exist, creating new entry";
+#if USE_TBB == 1
+    KeyHashMap::accessor acc;
+    keys.insert(acc, key);
+    key_entry = new KeyEntry(key);
+    acc->second = key_entry;
+#else
     lock.lock();
-    keys[key] = new KeyEntry(key);
-    LOG_DEBUG << key << " entry created";
+    key_entry = new KeyEntry(key);
+    keys[key] = key_entry;
     lock.unlock();
+#endif
+    LOG_DEBUG << key << " entry created";
     ret = true;
   }
 
   if (ret) {
-    lock.lock_shared();
-    auto key_entry_2 = keys.find(key);
-    lock.unlock_shared();
     LOG_DEBUG << key << " location " << location << " to be cached";
-    key_entry_2->second->cache_key(location);
+    key_entry->cache_key(location);
   }
   return ret;
 }
 
 bool MasterRegistry::cache_key(string key, string location) {
-  lock.lock_shared();
-  auto key_entry = keys.at(key);
-  lock.unlock_shared();
+  auto key_entry = get_key_entry(key);
   LOG_DEBUG << key << " location to be cached";
   return key_entry->cache_key(location);
 }
 
 bool MasterRegistry::uncache_key(string key, string location) {
-  lock.lock_shared();
-  auto key_entry = keys.at(key);
-  lock.unlock_shared();
+  auto key_entry = get_key_entry(key);
   LOG_DEBUG << key << " location to be uncached";
   return key_entry->uncache_key(location);
 }
 
 void MasterRegistry::clear_key(string key) {
+#if USE_TBB == 1
+  keys.erase(key);
+#else
   lock.lock();
   LOG_DEBUG << key << " entry to be erased";
   keys.erase(key);
   lock.unlock();
+#endif
 }
 
 string MasterRegistry::get_location(string input_key, string from) {
@@ -257,12 +262,18 @@ string MasterRegistry::consistent_write_lock(string input_key, string location, 
   } else {
     //TODO: possible that keys[key] is not empty now....
     //solution, must hold lock when delete
+#if USE_TBB == 1
+    KeyHashMap::accessor acc;
+    keys.insert(acc, key);
+    auto value = new KeyEntry(key, true);
+    acc->second = value;
+#else
     lock.lock();
     auto value = new KeyEntry(key, true);
     keys[key] = value;
-    value->consistent_lock.writer_lock(uri, max_duration, lambda_seq, snap_iso);
     lock.unlock();
-    ret = "success";
+#endif
+    ret = value->consistent_lock.writer_lock(uri, max_duration, lambda_seq, snap_iso);
   }
   LOG_DEBUG << "Return: " << ret;
   return ret;
@@ -278,10 +289,17 @@ string MasterRegistry::consistent_delete(string input_key, string lambda_id) {
     if(key_entry->consistency) {
       ret = key_entry->consistent_lock.writer_lock("null", 65536, lambda_seq, false);
       if (ret == "success") {
+#if USE_TBB == 1
+        KeyHashMap::accessor acc;
+        keys.find(acc, key);
+        delete acc->second;
+        keys.erase(key);
+#else
         lock.lock();
         delete keys[key];
         keys.erase(key);
         lock.unlock();
+#endif
       }
     } else {
       ret = "exception: not_consistent_key";
@@ -301,9 +319,17 @@ string MasterRegistry::delete_key(string key) {
     if(key_entry->consistency) {
       ret = "exception: key_is_consistent";
     } else {
+#if USE_TBB == 1
+      KeyHashMap::accessor acc;
+      keys.find(acc, key);
+      delete acc->second;
+      keys.erase(key);
+#else
       lock.lock();
+      delete keys[key];
       keys.erase(key);
       lock.unlock();
+#endif
       ret = "success";
     }
   } else {
@@ -338,10 +364,35 @@ string MasterRegistry::consistent_write_unlock(string input_key, string location
 KeyEntry* MasterRegistry::get_key_entry(string input_key) {
   bool consistency = input_key[0] == '~';
   string key = consistency?input_key.substr(1):input_key;
+#if USE_TBB == 1
+  KeyHashMap::accessor key_acc;
+  if (keys.find(key_acc, key)) {
+    return key_acc->second;
+  } else {
+    return NULL;
+  }
+#else
   lock.lock_shared();
   auto key_entry = keys.find(key);
   lock.unlock_shared();
   return key_entry == keys.end()?NULL:key_entry->second;
+#endif
+}
+
+LambdaEntry* MasterRegistry::get_lambda_entry(uint lambda_id) {
+#if USE_TBB == 1
+  LambdaHashMap::accessor acc;
+  if (lineage.find(acc, lambda_id)) {
+    return acc->second;
+  } else {
+    return NULL;
+  }
+#else
+  lineage_lock.lock_shared();
+  auto lambda_entry = lineage.find(lambda_id);
+  lineage_lock.unlock_shared();
+  return lambda_entry == lineage.end()?NULL:lambda_entry->second;
+#endif
 }
 
 string MasterRegistry::get_lineage(uint lambda_id) {
@@ -350,11 +401,11 @@ string MasterRegistry::get_lineage(uint lambda_id) {
   queue<uint> pending;
   pending.push(lambda_id);
   visited.insert(lambda_id);
-  lineage_lock.lock_shared();
   while(!pending.empty()) {
     uint curr = pending.front();
     pending.pop();
-    for (auto kv : lineage[curr]->dependency) {
+    auto entry = get_lambda_entry(curr);
+    for (auto kv : entry->dependency) {
       if (visited.find(kv.version) == visited.end()) {
         visited.insert(kv.version);
         pending.push(kv.version);
@@ -366,7 +417,6 @@ string MasterRegistry::get_lineage(uint lambda_id) {
       res += to_string(curr) + "," + kv.key + "," + to_string(kv.version) + "," + locations + "$";
     }
   }
-  lineage_lock.unlock_shared();
   return res;
 }
 
@@ -384,28 +434,25 @@ string MasterRegistry::failover_write_update(string key, uint version, string ad
 
 string MasterRegistry::force_release_lock(vector<uint> lambdas) {
   LOG_DEBUG << "force release lock";
-  lineage_lock.lock_shared();
   for (uint lambda_id : lambdas) {
     LOG_DEBUG << "force release lock for lambda " << lambda_id;
-    for (LockState ls : lineage[lambda_id]->locks ) {
+    auto entry = get_lambda_entry(lambda_id);
+    for (LockState ls : entry->locks ) {
       LOG_DEBUG << "releaseing " << ls.key;
       get_key_entry(ls.key)->consistent_lock.force_release_lock();
     }    
   }
-  lineage_lock.unlock_shared();
   return "success";
 }
 
 
 void MasterRegistry::register_lock(uint lambda, string key, bool write) {
-  lineage_lock.lock_shared();
-  auto entry = lineage.find(lambda);
-  lineage_lock.unlock_shared();
-  if (entry == lineage.end()) {
+  auto entry = get_lambda_entry(lambda);
+  if (entry == NULL) {
     LOG_ERROR << "can't file lambda in lineage";
     assert(false);
   } else {
-    entry->second->use_lock(key,write);
+    entry->use_lock(key,write);
     LOG_DEBUG << "Sucessfully registered lock for " << lambda << ", key " << key << ", write " << write;
   }
 };

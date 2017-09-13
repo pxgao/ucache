@@ -205,32 +205,27 @@ class LockException(Exception):
   pass
 
 def s3_recv_proc(tmp_fn, bucket, key, consistency, size):
-  try:
-    print "s3_recv_proc: Start reading %s:%s from s3, size %s" % (bucket, key, size)
-    f = open(tmp_fn, "wb")
-    s3 = boto3.client("s3")
-    obj = s3.get_object(Bucket = bucket, Key = key)
-    #obj = smart_open.smart_open("s3://%s/%s" % (bucket, key))
-    total_read = 0
-    while True:
-      try:
+  while True:
+    try:
+      print "s3_recv_proc: Start reading %s:%s from s3, size %s" % (bucket, key, size)
+      f = open(tmp_fn, "wb")
+      s3 = boto3.client("s3")
+      obj = s3.get_object(Bucket = bucket, Key = key)
+      #obj = smart_open.smart_open("s3://%s/%s" % (bucket, key))
+      total_read = 0
+      while True:
         data = obj["Body"].read(min(100 * 1024, size - total_read))
         #data = obj.read(min(100 * 1024, size - total_read))
-      except Exception as e:
-        if "Read timed out" in str(e):
-          print "s3_recv_proc: %s" % e
-          continue
-        else:
-          raise e
-      if len(data) == 0:
-        break
-      total_read += len(data)
-      f.write(data)
-    f.close()
-    assert size == total_read
-    print "s3_recv_proc: Done reading %s:%s from s3, size %s" % (bucket, key, size)
-  except Exception as e:
-    print "s3_recv_proc: %s" % e
+        if len(data) == 0:
+          break
+        total_read += len(data)
+        f.write(data)
+      f.close()
+      assert size == total_read
+      print "s3_recv_proc: Done reading %s:%s from s3, size %s" % (bucket, key, size)
+      return
+    except Exception as e:
+      print "s3_recv_proc: %s" % e
 
 class CacheClient:
   def __init__(self, master_ip = None, extra = {}):
@@ -253,7 +248,7 @@ class CacheClient:
     self.sockets = {}
     self.closed = False
     self.commit_write_done = False
-    self.executor = multiprocessing.Pool(processes=2)
+    self.executor = multiprocessing.Pool(processes=3)
     #self.executor = fs.ProcessPoolExecutor(max_workers=8)
 
     self.master = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

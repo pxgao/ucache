@@ -20,6 +20,7 @@ add_executable(master master.cc masterworker.cc log.cc masterregistry.cc readerw
 target_link_libraries(master pthread)
 target_link_libraries(master boost_thread)
 target_link_libraries(master boost_system)
+target_link_libraries(master tbb)
 
 
 

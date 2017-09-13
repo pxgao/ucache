@@ -1,6 +1,7 @@
 #ifndef MASTERREGISTRY_H
 #define MASTERREGISTRY_H
 
+#include "tbb/concurrent_hash_map.h"
 #include <mutex>
 #include <set>
 #include <map>
@@ -9,6 +10,8 @@
 #include <boost/thread.hpp>
 #include <boost/thread/shared_mutex.hpp>
 #include <atomic>
+
+#define USE_TBB 1
 
 using namespace std;
 
@@ -49,6 +52,30 @@ public:
   vector<LockState> locks; 
 };
 
+struct KeyHashCompare {
+  static size_t hash( const string& x ) {
+    size_t h = 0;
+    for( const char* s = x.c_str(); *s; ++s )
+      h = (h*17)^*s;
+    return h;
+  }
+  static bool equal( const string& x, const string& y ) {
+    return x==y;
+  }
+};
+
+typedef tbb::concurrent_hash_map<string, KeyEntry*, KeyHashCompare> KeyHashMap;
+
+struct LambdaHashCompare {
+  static size_t hash( const int& x ) {
+    return x;
+  }
+  static bool equal( const int& x, const int& y ) {
+    return x==y;
+  }
+};
+
+typedef tbb::concurrent_hash_map<uint, LambdaEntry*, LambdaHashCompare> LambdaHashMap;
 
 class MasterRegistry {
 public: 
@@ -77,12 +104,18 @@ public:
   string failover_write_update(string key, uint version, string addr, string lambda);
   string force_release_lock(vector<uint> lambdas);
 private:
+  LambdaEntry* get_lambda_entry(uint lambda_id);
   KeyEntry* get_key_entry(string key);
+  atomic<uint> lambda_seq;
+#if USE_TBB == 1
+  KeyHashMap keys;
+  LambdaHashMap lineage;
+#else
   map<string, KeyEntry*> keys;
   boost::shared_mutex lock;
-  atomic<uint> lambda_seq;
   map<uint, LambdaEntry*> lineage;
   boost::shared_mutex lineage_lock;
+#endif
 };
 
 #endif

@@ -58,7 +58,13 @@ void EpollMasterWorker::run() {
         close(events[i].data.fd);
         continue;
       } else {
-        master_workers[events[i].data.fd]->do_action();
+        try {
+          master_workers[events[i].data.fd]->do_action();
+        } catch (exception& e) {
+          LOG_ERROR << "Caught exception, removing";
+          remove(events[i].data.fd);
+          close(events[i].data.fd);
+        }
       }
     }
 

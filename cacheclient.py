@@ -89,7 +89,9 @@ class FOutputStream():
         self.client.send_put(self.bucket, self.key, self.consistency)
         ack = self.client.master.recv(1024)
     if self.s3:
-      threading.Thread(target=self.upload_s3).start()   
+      upload_res = self.client.executor.apply_async(upload_s3_proc, (self.fn, self.bucket, self.key, self.client.seq,))
+      self.client.s3_uploads.append(upload_res)
+      #threading.Thread(target=self.upload_s3).start()   
     return True
 
 class FInputStream:
@@ -204,6 +206,17 @@ class FInputStream:
 class LockException(Exception):
   pass
 
+def upload_s3_proc(fn, bucket, key, seq):
+  while True:
+    try:
+      print "upload_s3: Start syncing %s to s3." % fn
+      s3 = boto3.client("s3")
+      s3.upload_file(fn, bucket, key + ".%s" % seq)
+      print "upload_s3: %s synced to s3." % fn
+      return fn
+    except Exception as e:
+      print "upload_s3: err %s" % str(e)
+
 def s3_recv_proc(tmp_fn, bucket, key, consistency, size):
   while True:
     try:
@@ -228,7 +241,7 @@ def s3_recv_proc(tmp_fn, bucket, key, consistency, size):
       print "s3_recv_proc: %s" % e
 
 class CacheClient:
-  def __init__(self, master_ip = None, extra = {}):
+  def __init__(self, master_ip = None, extra = {}, s3_proc_pool_size = 3):
     self.s3_bg_read = True
     self.peer_bg_read = False
 
@@ -248,7 +261,7 @@ class CacheClient:
     self.sockets = {}
     self.closed = False
     self.commit_write_done = False
-    self.executor = multiprocessing.Pool(processes=3)
+    self.executor = multiprocessing.Pool(processes=s3_proc_pool_size)
     #self.executor = fs.ProcessPoolExecutor(max_workers=8)
 
     self.master = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -260,6 +273,7 @@ class CacheClient:
     if self.replay_inputs is not None: print "replay inputs:", self.replay_inputs
     self.read_obj = []
     self.write_obj = []
+    self.s3_uploads = []
     self.log.info("CacheClient Initialized id:%s" % self.lambda_id)
 
   def __del__(self):
@@ -276,6 +290,9 @@ class CacheClient:
       self.master.close()
       self.closed = True
       self.log.info("CacheClient deleted")
+
+  def fsync(self):
+    [u.get() for u in self.s3_uploads]
 
   def get_master_ip(self):
     self.log.debug("Getting master ip address")
@@ -413,7 +430,7 @@ class CacheClient:
     self.log.debug("waiting for miss ack")
     ack = self.master.recv(1024).strip()
     self.log.debug("miss ack received: %s" % ack)
-    addrs = ack.split("|")[2].split(";")
+    addrs = ack.split("|")[2].strip(";").split(";")
     size = None
     tmp_key = fn
     if "" == addrs[0]:
@@ -477,7 +494,7 @@ class CacheClient:
       return
     def get_cmd(os):
       return "0|consistent_unlock|write|%s|%s|%s" % (os.shm_name, os.client.lambda_id, "1" if os.modified else "0")
-    cmds = [get_cmd(os) for os in self.write_obj if os.snap_iso]
+    cmds = [get_cmd(os) for os in self.write_obj if os.consistency and os.snap_iso]
     if len(cmds) > 0:
       for i in range(0, len(cmds), 100):
         curr_cmds = cmds[i:i+100]

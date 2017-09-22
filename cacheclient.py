@@ -9,6 +9,8 @@ import errno
 import multiprocessing 
 import concurrent.futures as fs
 import smart_open
+import posix_ipc
+import mmap
 
 STORAGE = "/dev/shm/cache/"
 
@@ -56,9 +58,17 @@ class FOutputStream():
     self.snap_iso = False
     self.closed = False
     self.s3_uploaded = False
+    self.bytes_written = 0
+    self.next_limit = 134217728
     self.s3 = s3
 
   def write(self, s):
+    if self.bytes_written > self.next_limit:
+      while self.client.savanna_gc[0] != '1':
+        self.client.log.debug("Out of space, waiting for gc")
+        time.sleep(1)
+      self.next_limit += 134217728
+    self.bytes_written += len(s)
     self.modified = True
     self.fd.write(s)
 
@@ -264,6 +274,11 @@ class CacheClient:
     self.executor = multiprocessing.Pool(processes=s3_proc_pool_size)
     #self.executor = fs.ProcessPoolExecutor(max_workers=8)
 
+    shm = posix_ipc.SharedMemory("savanna_gc", flags=posix_ipc.O_CREAT, mode=0666, size=10)
+    mm = mmap.mmap(shm.fd, shm.size)
+    mm[0] = '1'
+    self.savanna_gc = buffer(mm, 0, shm.size)
+
     self.master = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     self.master.connect((self.master_ip, 1988))
     self.master.sendall("0|new_server|1222|%s\n" % ("" if "lambda_id" not in extra else extra["lambda_id"]))
@@ -288,6 +303,7 @@ class CacheClient:
       for k,v in self.sockets.iteritems():
         v.close()
       self.master.close()
+      self.executor.close()
       self.closed = True
       self.log.info("CacheClient deleted")
 
@@ -456,7 +472,10 @@ class CacheClient:
     use_s3 = "s3" if s3 else "nos3"
     snap_iso = "snap" if snap else "no_snap"
     if write:
-      version = "recent" if self.replay_inputs is None else self.lambda_id[6:]
+      if read_write:
+        version = "recent" if (self.replay_inputs is None or name not in self.replay_inputs) else self.replay_inputs[name].version
+      else:
+        version = "recent" if self.replay_inputs is None else self.lambda_id[6:]
     else:
       if s3:
         version = "recent" if self.replay_inputs is None else self.lambda_id[6:]    
@@ -538,11 +557,8 @@ class CacheClient:
     assert type(key) is str
     name = self.shm_name(bucket, key, consistency)
     self.log.debug("get bucket %s, key %s, name %s" % (bucket, key, name))
-    if s3 and (lock_type is not None and lock_type == "write"):
-      self.log.debug("calling s3_read")
-      size = self.s3_read(name, bucket, key, consistency)
-      return self.read_file(name, bucket, key, size, consistency, s3 = True)
-    elif loc_hint is None:
+    #inconsistency mode
+    if loc_hint is None:
       always_query_master = True
       for i in range(1):
         ret = None if (consistency and i == 0) or always_query_master else self.read_file(name, bucket, key) 
@@ -562,16 +578,28 @@ class CacheClient:
             size = parts[3]
             name = parts[4] #tmp_key
       return self.read_file(name, bucket, key, size, consistency, s3 = s3)
+    #consistency mode
     else:
       self.log.debug("loc_hint = %s" % loc_hint)
-      addrs = loc_hint.split(";")
+      addrs = loc_hint.strip(";").split(";")
       size = None
+      #file not cached
       if "" == addrs[0]:
-        return self.read_file(None, bucket, key, size, consistency)
+        #rw from s3
+        if s3 and (lock_type is not None and lock_type == "write"):
+          self.log.debug("calling s3_read")
+          try:
+            size = self.s3_read(name, bucket, key, consistency)
+            return self.read_file(name, bucket, key, size, consistency, s3 = True)
+          except Exception as e:
+            self.direct_unlock(bucket, key, write = True, modified = False, s3 = True)
+            raise e
+        else:
+          return self.read_file(None, bucket, key, size, consistency)
       elif "use_local" in addrs[0]:
         pass
       else:
-        (size, tmp_key) = self.peer_read(addrs[0], name)
+        (size, tmp_key) = self.peer_read(random.choice(addrs), name)
         name = tmp_key
       return self.read_file(name, bucket, key, size, consistency)
 

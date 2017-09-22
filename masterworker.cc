@@ -194,19 +194,19 @@ string MasterWorker::handle_consistent_lock(vector<string> parts) {
     ret = master.registry.consistent_write_lock(parts[2], addr, parts[3], atoi(parts[4].c_str()), parts[6] == "snap");
     loc = master.registry.get_location(parts[2], addr);
     if(ret == "success") {
-      //LOG_DEBUG << "ret = success";
+      LOG_DEBUG << "ret = success";
       uint lambda_id = atoi(parts[3].substr(6).c_str());
       if( parts[7] == "check_loc" && parts[5] != "s3") { //check_loc iff open as rw
-        //LOG_DEBUG << "check_loc and s3";
+        LOG_DEBUG << "check_loc and s3";
         uint key_version = master.registry.get_key_version(parts[2], true);
         master.registry.register_lineage(lambda_id, parts[2], key_version);
       }
       master.registry.register_lock(lambda_id, parts[2], true);
     } else { 
       if (parts[8] == "recent") {
-        //can't lock 
+        LOG_DEBUG << "part[8] == recent, lock failed";
       } else {
-        //LOG_DEBUG << "part[8] != recent";
+        LOG_DEBUG << "part[8] != recent";
         ret = "success";
         loc = master.registry.get_location_version(parts[2], addr, atoi(parts[8].c_str()));
       }
@@ -275,7 +275,7 @@ string MasterWorker::handle_lineage(vector<string> parts) {
 
 string MasterWorker::handle_failover_write_update(vector<string> parts) {
   //failover_write_update|key|version|lambda_id
-  return "lineage_ack|" + master.registry.failover_write_update(parts[1], atoi(parts[2].c_str()), addr, parts[3]);
+  return "failover_write_update_ack|" + master.registry.failover_write_update(parts[1], atoi(parts[2].c_str()), addr, parts[3]);
 }
 
 string MasterWorker::handle_force_release_lock(vector<string> parts) {

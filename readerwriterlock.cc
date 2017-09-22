@@ -136,7 +136,7 @@ string ReaderWriterLock::update_version_location(uint version, string location) 
   string ret = "success";
   lock.lock();
   if (version == seq_num) {
-    assert(write_mode);
+    //assert(write_mode);
     owners.clear();
     owners[location] = chrono::system_clock::now() + chrono::seconds(1000);
   } else if (version < seq_num) {
